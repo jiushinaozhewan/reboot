@@ -1,4 +1,4 @@
-# Reboot - 远程电源管理系统
+# Reboot - 远程电源管理系统PC版
 
 [![Release](https://img.shields.io/github/v/release/jiushinaozhewan/reboot)](https://github.com/jiushinaozhewan/reboot/releases)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
