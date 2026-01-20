@@ -1,0 +1,24 @@
+# Build artifacts
+/target/
+**/*.rs.bk
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Config files with sensitive data (local testing)
+config.enc
+config.toml
+
+# Logs
+*.log
+
+# Temp/progress files
+jindu*.txt
+nul

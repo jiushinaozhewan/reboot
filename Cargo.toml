@@ -1,0 +1,51 @@
+[workspace]
+members = ["agent", "client", "common"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["Your Name"]
+license = "MIT"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1.43", features = ["full"] }
+
+# TLS
+tokio-rustls = "0.26"
+rustls = { version = "0.23", default-features = false, features = ["std", "tls12"] }
+webpki-roots = "0.26"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+rmp-serde = "1.3"
+
+# Cryptography
+aes-gcm = "0.10"
+sha2 = "0.10"
+hmac = "0.12"
+rand = "0.8"
+hex = "0.4"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "2.0"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Configuration
+toml = "0.8"
+dirs = "5.0"
+
+# Common crate
+common = { path = "common" }
+
+[profile.release]
+opt-level = 2
+lto = false
+codegen-units = 16
+strip = true
+panic = "abort"
