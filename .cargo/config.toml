@@ -1,0 +1,17 @@
+# Cargo configuration for Windows 7+ compatibility
+
+[target.x86_64-pc-windows-msvc]
+# Static link the C runtime to avoid DLL dependencies
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.i686-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[build]
+# Rerun build scripts when these change
+# This helps with Windows version targeting
+
+[env]
+# Windows 7 compatibility (0x0601)
+WINVER = "0x0601"
+_WIN32_WINNT = "0x0601"
