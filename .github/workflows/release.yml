@@ -1,0 +1,56 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-action@stable
+
+      - name: Build release
+        run: cargo build --release
+
+      - name: Prepare artifacts
+        run: |
+          mkdir artifacts
+          copy target\release\reboot-agent.exe artifacts\
+          copy target\release\reboot-client.exe artifacts\
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Release ${{ github.ref_name }}
+          body: |
+            ## 远程电源管理系统 ${{ github.ref_name }}
+
+            ### 下载说明
+            - `reboot-agent.exe` - 被控端程序（安装在需要被远程控制的电脑上）
+            - `reboot-client.exe` - 控制端程序（安装在你的控制电脑上）
+
+            ### 使用方法
+            1. 在被控端运行 `reboot-agent.exe`（需管理员权限）
+            2. 在控制端运行 `reboot-client.exe`
+            3. 输入被控端 IP 地址和预共享密钥进行连接
+
+            ### 注意事项
+            - 被控端需要开放防火墙端口（默认 7890）
+            - WoL 功能需要在 BIOS 中启用 Wake-on-LAN
+          files: |
+            artifacts/reboot-agent.exe
+            artifacts/reboot-client.exe
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
