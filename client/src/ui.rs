@@ -166,20 +166,22 @@ impl App {
                     Ok((conn, mac)) => {
                         self.connection = Some(conn);
 
-                        // Save MAC if we got one
+                        // Save MAC if we got one, otherwise clear old cached value
                         if let Some(m) = mac {
                             self.saved_mac = Some(m);
                             self.config.set_mac(&m);
                             let _ = self.config.save();
                             info!("Saved MAC address: {}", wol::format_mac(&m));
+
+                            let mac_info = format!(" | MAC: {}", wol::format_mac(&m));
+                            self.set_status(&format!("已连接{}", mac_info), false);
+                        } else {
+                            self.saved_mac = None;
+                            self.config.saved_mac = None;
+                            let _ = self.config.save();
+                            info!("MAC address not available; cleared cached MAC");
+                            self.set_status("已连接 | MAC 获取失败", true);
                         }
-
-                        let mac_info = self
-                            .saved_mac
-                            .map(|m| format!(" | MAC: {}", wol::format_mac(&m)))
-                            .unwrap_or_default();
-
-                        self.set_status(&format!("已连接{}", mac_info), false);
                     }
                     Err(e) => {
                         self.set_status(&format!("连接失败: {}", e), true);

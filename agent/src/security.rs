@@ -147,7 +147,7 @@ impl RequestValidator {
     pub fn new(psk: [u8; 32]) -> Self {
         Self {
             psk,
-            timestamp_tolerance: 60,
+            timestamp_tolerance: 600,
             seen_ids: Mutex::new(HashMap::new()),
         }
     }
