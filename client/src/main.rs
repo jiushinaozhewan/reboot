@@ -5,6 +5,7 @@
 
 mod config;
 mod connection;
+mod target;
 mod ui;
 mod wol;
 
@@ -32,9 +33,9 @@ fn main() -> iced::Result {
     tracing::info!("Reboot Client starting...");
 
     // Run the GUI with Chinese font support
-    iced::application("远程电源管理", ui::App::update, ui::App::view)
-        .window_size(Size::new(450.0, 280.0))
-        .resizable(false)
+    iced::application("远程电源管理 - 多目标控制", ui::App::update, ui::App::view)
+        .window_size(Size::new(1000.0, 700.0))
+        .resizable(true)
         .theme(ui::App::theme)
         .default_font(DEFAULT_FONT)
         .run_with(ui::App::new)

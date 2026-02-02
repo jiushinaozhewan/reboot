@@ -1,8 +1,8 @@
 //! Wake-on-LAN implementation
 
 use socket2::{Domain, Protocol, Socket, Type};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
-use tracing::{error, info};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use tracing::info;
 
 /// Send a Wake-on-LAN magic packet
 pub fn send_magic_packet(mac: &[u8; 6], broadcast_addr: Option<&str>) -> Result<(), std::io::Error> {

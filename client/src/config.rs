@@ -1,32 +1,39 @@
 //! Configuration management for the client
 
+use crate::target::{Target, TargetConfig};
 use common::{psk_from_hex, psk_to_hex, ConfigError};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tracing::info;
 
-/// Client configuration
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+/// Client configuration for multi-target management
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
-    /// Last connected IP address
-    #[serde(default)]
-    pub last_ip: String,
-
-    /// Last connected port
-    #[serde(default = "default_port")]
-    pub last_port: u16,
-
-    /// Pre-shared key (hex encoded)
+    /// Pre-shared key (hex encoded) - shared by all targets
     #[serde(default)]
     pub psk_hex: String,
 
-    /// Saved MAC address from the agent
+    /// Number of targets to display
+    #[serde(default = "default_target_count")]
+    pub target_count: usize,
+
+    /// List of target configurations
     #[serde(default)]
-    pub saved_mac: Option<String>,
+    pub targets: Vec<TargetConfig>,
 }
 
-fn default_port() -> u16 {
-    common::DEFAULT_PORT
+fn default_target_count() -> usize {
+    10
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            psk_hex: String::new(),
+            target_count: default_target_count(),
+            targets: Vec::new(),
+        }
+    }
 }
 
 impl Config {
@@ -43,16 +50,27 @@ impl Config {
         self.psk_hex = psk_to_hex(psk);
     }
 
-    /// Get the saved MAC address as bytes
-    pub fn get_mac(&self) -> Option<[u8; 6]> {
-        self.saved_mac
-            .as_ref()
-            .and_then(|s| crate::wol::parse_mac(s).ok())
+    /// Generate runtime targets from configuration
+    pub fn to_targets(&self) -> Vec<Target> {
+        let mut targets = Vec::new();
+        
+        // Convert saved target configs to runtime targets
+        for (id, config) in self.targets.iter().enumerate() {
+            targets.push(config.to_target(id));
+        }
+        
+        // Fill remaining slots with empty targets up to target_count
+        for id in targets.len()..self.target_count {
+            targets.push(Target::new(id));
+        }
+        
+        targets
     }
 
-    /// Set the saved MAC address
-    pub fn set_mac(&mut self, mac: &[u8; 6]) {
-        self.saved_mac = Some(crate::wol::format_mac(mac));
+    /// Save targets to configuration
+    pub fn update_targets(&mut self, targets: &[Target]) {
+        self.targets = targets.iter().map(TargetConfig::from).collect();
+        self.target_count = targets.len();
     }
 
     /// Get the config file path
