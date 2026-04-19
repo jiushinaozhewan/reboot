@@ -8,8 +8,6 @@ use crate::wol;
 use common::psk_from_hex;
 use iced::widget::{button, checkbox, column, container, row, scrollable, text, text_input, Space};
 use iced::{Color, Element, Length, Task, Theme};
-use std::sync::Arc;
-use tokio::sync::Mutex;
 use tracing::{error, info};
 
 /// Application state
@@ -50,6 +48,7 @@ pub enum Message {
     TargetAliasChanged(usize, String),
     TargetIpChanged(usize, String),
     TargetPortChanged(usize, String),
+    TargetBroadcastChanged(usize, String),
     
     // Batch operations
     SelectAll(bool),
@@ -59,7 +58,7 @@ pub enum Message {
     WakePressed,
 
     // Connection results
-    ConnectionResult(usize, Result<(Arc<Mutex<Connection>>, Option<[u8; 6]>), String>),
+    ConnectionResult(usize, Result<Option<[u8; 6]>, String>),
 
     // Confirmation dialog
     ConfirmYes,
@@ -90,10 +89,6 @@ impl App {
         (app, Task::none())
     }
 
-    pub fn title(&self) -> String {
-        "远程电源管理 - 多目标控制".into()
-    }
-    
     /// Get count of selected targets
     fn selected_count(&self) -> usize {
         self.targets.iter().filter(|t| t.selected).count()
@@ -188,6 +183,13 @@ impl App {
                 }
                 Task::none()
             }
+
+            Message::TargetBroadcastChanged(id, value) => {
+                if let Some(target) = self.targets.get_mut(id) {
+                    target.broadcast = value;
+                }
+                Task::none()
+            }
             
             Message::SelectAll(selected) => {
                 for target in &mut self.targets {
@@ -234,16 +236,10 @@ impl App {
                         Task::perform(
                             async move {
                                 let result = async {
-                                    let conn = Connection::connect(&addr, psk).await.map_err(|e| e.to_string())?;
-                                    let conn = Arc::new(Mutex::new(conn));
-
-                                    // Try to get MAC address
-                                    let mac = {
-                                        let mut guard = conn.lock().await;
-                                        guard.get_mac_address().await.ok()
-                                    };
-
-                                    Ok((conn, mac))
+                                    let mut conn = Connection::connect(&addr, psk)
+                                        .await
+                                        .map_err(|e| e.to_string())?;
+                                    Ok(conn.get_mac_address().await.ok())
                                 }.await;
                                 (id, result)
                             },
@@ -258,9 +254,8 @@ impl App {
             Message::ConnectionResult(id, result) => {
                 if let Some(target) = self.targets.get_mut(id) {
                     match result {
-                        Ok((conn, mac)) => {
+                        Ok(mac) => {
                             target.set_connected(mac);
-                            target.set_connection(conn);
                             info!("Target {} ({}) connected", id, target.alias);
                         }
                         Err(e) => {
@@ -365,7 +360,7 @@ impl App {
                 let targets_with_mac: Vec<(usize, [u8; 6], Option<String>)> = self.targets
                     .iter()
                     .filter(|t| t.selected && t.mac.is_some())
-                    .map(|t| (t.id, t.mac.unwrap(), compute_broadcast(&t.ip)))
+                    .map(|t| (t.id, t.mac.unwrap(), t.broadcast_target().map(str::to_owned)))
                     .collect();
 
                 if targets_with_mac.is_empty() {
@@ -502,6 +497,7 @@ impl App {
             container(text("别名").size(13)).width(120),
             container(text("IP地址").size(13)).width(150),
             container(text("端口").size(13)).width(80),
+            container(text("广播地址").size(13)).width(150),
             container(text("状态").size(13)).width(120),
             container(text("MAC地址").size(13)).width(160),
         ]
@@ -530,6 +526,11 @@ impl App {
                     .width(80)
                     .padding(6);
 
+                let broadcast_input = text_input("广播地址(可选)", &target.broadcast)
+                    .on_input(move |value| Message::TargetBroadcastChanged(target.id, value))
+                    .width(150)
+                    .padding(6);
+
                 let status_text = text(target.status.text())
                     .size(13)
                     .color(target.status.color());
@@ -542,6 +543,7 @@ impl App {
                     alias_input,
                     ip_input,
                     port_input,
+                    broadcast_input,
                     container(status_text).width(120),
                     container(mac_text).width(160),
                 ]
@@ -629,15 +631,5 @@ impl App {
         } else {
             Color::from_rgb(0.2, 0.6, 0.2)
         };
-    }
-}
-
-/// Compute broadcast address from IP (simple /24 assumption)
-fn compute_broadcast(ip: &str) -> Option<String> {
-    let parts: Vec<&str> = ip.split('.').collect();
-    if parts.len() == 4 {
-        Some(format!("{}.{}.{}.255", parts[0], parts[1], parts[2]))
-    } else {
-        None
     }
 }

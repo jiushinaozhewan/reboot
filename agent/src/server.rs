@@ -1,4 +1,4 @@
-//! TCP server with TLS for handling remote commands
+//! TCP server for handling authenticated remote commands
 
 use crate::config::Config;
 use crate::executor::{execute_command, get_mac_address};
@@ -148,10 +148,9 @@ async fn handle_client(
 
     // Validate request
     if let Err(status) = validator.validate(&request) {
-        // Track auth failures for blocking
         if status == Status::AuthFailed {
-            // After 3 failures, the rate limiter would block anyway
             warn!("Auth failure from {}", addr);
+            rate_limiter.record_auth_failure(addr.ip());
         }
 
         send_response(
@@ -161,6 +160,8 @@ async fn handle_client(
         .await?;
         return Ok(());
     }
+
+    rate_limiter.clear_auth_failures(addr.ip());
 
     // Execute command
     let response = match &request.command {
@@ -194,7 +195,7 @@ async fn send_response(
     stream: &mut TcpStream,
     response: CommandResponse,
 ) -> Result<(), io::Error> {
-    let data = serialize(&response).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    let data = serialize(&response).map_err(io::Error::other)?;
 
     // Send length prefix
     let len = (data.len() as u32).to_le_bytes();

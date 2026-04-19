@@ -1,9 +1,5 @@
 //! Multi-target management data structures
 
-use crate::connection::Connection;
-use std::sync::Arc;
-use tokio::sync::Mutex;
-
 /// Status of a single target
 #[derive(Debug, Clone, PartialEq)]
 pub enum TargetStatus {
@@ -42,14 +38,6 @@ impl TargetStatus {
     pub fn is_error(&self) -> bool {
         matches!(self, TargetStatus::Error(_))
     }
-
-    /// Get error message if status is error
-    pub fn error_message(&self) -> Option<&str> {
-        match self {
-            TargetStatus::Error(msg) => Some(msg),
-            _ => None,
-        }
-    }
 }
 
 /// A single target device
@@ -65,13 +53,12 @@ pub struct Target {
     pub ip: String,
     /// Port number
     pub port: String,
+    /// Optional per-target WoL broadcast address
+    pub broadcast: String,
     /// Connection status
     pub status: TargetStatus,
     /// MAC address (obtained after successful connection)
     pub mac: Option<[u8; 6]>,
-    /// Active connection (not serialized)
-    #[allow(dead_code)]
-    pub connection: Option<Arc<Mutex<Connection>>>,
 }
 
 impl Target {
@@ -83,9 +70,9 @@ impl Target {
             alias: format!("目标-{}", id + 1),
             ip: String::new(),
             port: "7890".to_string(),
+            broadcast: String::new(),
             status: TargetStatus::Disconnected,
             mac: None,
-            connection: None,
         }
     }
 
@@ -101,11 +88,6 @@ impl Target {
         } else {
             None
         }
-    }
-
-    /// Get port as u16
-    pub fn port_u16(&self) -> Option<u16> {
-        self.port.parse().ok()
     }
 
     /// Format MAC address for display
@@ -135,23 +117,12 @@ impl Target {
     /// Set connection status to error
     pub fn set_error(&mut self, msg: String) {
         self.status = TargetStatus::Error(msg);
-        self.connection = None;
     }
 
-    /// Set connection status to disconnected
-    pub fn set_disconnected(&mut self) {
-        self.status = TargetStatus::Disconnected;
-        self.connection = None;
-    }
-
-    /// Set the active connection
-    pub fn set_connection(&mut self, conn: Arc<Mutex<Connection>>) {
-        self.connection = Some(conn);
-    }
-
-    /// Clear the active connection
-    pub fn clear_connection(&mut self) {
-        self.connection = None;
+    /// Get the configured broadcast target, if any
+    pub fn broadcast_target(&self) -> Option<&str> {
+        let broadcast = self.broadcast.trim();
+        (!broadcast.is_empty()).then_some(broadcast)
     }
 }
 
@@ -162,6 +133,8 @@ pub struct TargetConfig {
     pub ip: String,
     pub port: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub broadcast: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub mac: Option<String>,
 }
 
@@ -171,6 +144,7 @@ impl From<&Target> for TargetConfig {
             alias: target.alias.clone(),
             ip: target.ip.clone(),
             port: target.port.clone(),
+            broadcast: target.broadcast_target().map(str::to_owned),
             mac: target.mac.map(|mac| {
                 format!(
                     "{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
@@ -192,9 +166,9 @@ impl TargetConfig {
             alias: self.alias.clone(),
             ip: self.ip.clone(),
             port: self.port.clone(),
+            broadcast: self.broadcast.clone().unwrap_or_default(),
             status: TargetStatus::Disconnected,
             mac,
-            connection: None,
         }
     }
 }

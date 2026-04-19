@@ -1,7 +1,7 @@
 //! Configuration management for the client
 
 use crate::target::{Target, TargetConfig};
-use common::{psk_from_hex, psk_to_hex, ConfigError};
+use common::ConfigError;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tracing::info;
@@ -37,19 +37,6 @@ impl Default for Config {
 }
 
 impl Config {
-    /// Get the PSK as bytes
-    pub fn get_psk(&self) -> Result<[u8; 32], ConfigError> {
-        if self.psk_hex.is_empty() {
-            return Err(ConfigError::ParseError("PSK not configured".into()));
-        }
-        psk_from_hex(&self.psk_hex).map_err(|e| ConfigError::ParseError(e.to_string()))
-    }
-
-    /// Set the PSK from bytes
-    pub fn set_psk(&mut self, psk: &[u8; 32]) {
-        self.psk_hex = psk_to_hex(psk);
-    }
-
     /// Generate runtime targets from configuration
     pub fn to_targets(&self) -> Vec<Target> {
         let mut targets = Vec::new();

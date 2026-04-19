@@ -55,8 +55,6 @@ pub enum NetworkError {
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),
 
-    #[error("TLS error: {0}")]
-    TlsError(String),
 }
 
 /// Command execution errors

@@ -38,7 +38,7 @@
 新版 Config:
 - psk_hex (全局共享)
 - target_count (1-200)
-- targets: Vec<TargetConfig> (多目标列表)
+- targets: Vec<TargetConfig> (多目标列表，支持缓存 MAC 和可选广播地址)
 ```
 
 **新增方法：**
@@ -58,7 +58,7 @@
 新版 App:
 - psk_input (全局密钥)
 - target_count_input (动态行数)
-- targets: Vec<Target> (目标列表)
+- targets: Vec<Target> (目标列表，连接状态与 WoL 广播配置按目标维护)
 ```
 
 #### 消息系统扩展

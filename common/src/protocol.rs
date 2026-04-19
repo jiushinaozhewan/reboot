@@ -116,11 +116,7 @@ impl CommandRequest {
             .unwrap()
             .as_secs();
 
-        let diff = if now > self.timestamp {
-            now - self.timestamp
-        } else {
-            self.timestamp - now
-        };
+        let diff = now.abs_diff(self.timestamp);
 
         diff <= tolerance_secs
     }

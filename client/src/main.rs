@@ -1,7 +1,7 @@
 //! Reboot Client - Remote power management controller
 //!
-//! GUI application for sending remote shutdown, restart, and
-//! Wake-on-LAN commands to the agent.
+//! GUI application for sending authenticated remote shutdown, restart,
+//! and Wake-on-LAN commands to the agent.
 
 mod config;
 mod connection;

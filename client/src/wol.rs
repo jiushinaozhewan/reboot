@@ -60,14 +60,6 @@ pub fn parse_mac(mac_str: &str) -> Result<[u8; 6], String> {
     Ok(mac)
 }
 
-/// Format MAC address for display
-pub fn format_mac(mac: &[u8; 6]) -> String {
-    format!(
-        "{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
-        mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -89,12 +81,6 @@ mod tests {
         // Test lowercase
         let mac = parse_mac("aa:bb:cc:dd:ee:ff").unwrap();
         assert_eq!(mac, [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF]);
-    }
-
-    #[test]
-    fn test_format_mac() {
-        let mac = [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF];
-        assert_eq!(format_mac(&mac), "AA:BB:CC:DD:EE:FF");
     }
 
     #[test]
