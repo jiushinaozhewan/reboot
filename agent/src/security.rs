@@ -7,6 +7,9 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tracing::{info, warn};
 
+const AUTH_FAILURE_THRESHOLD: u32 = 3;
+const TIMESTAMP_TOLERANCE_SECS: u64 = 60;
+
 /// Rate limiter for incoming requests
 pub struct RateLimiter {
     /// Maximum requests per window
@@ -17,6 +20,8 @@ pub struct RateLimiter {
     counts: Mutex<HashMap<IpAddr, (u32, Instant)>>,
     /// Blocked IPs (after too many failures)
     blocked: Mutex<HashMap<IpAddr, Instant>>,
+    /// Authentication failures per IP
+    auth_failures: Mutex<HashMap<IpAddr, (u32, Instant)>>,
     /// Block duration
     block_duration: Duration,
 }
@@ -28,6 +33,7 @@ impl RateLimiter {
             window: Duration::from_secs(60),
             counts: Mutex::new(HashMap::new()),
             blocked: Mutex::new(HashMap::new()),
+            auth_failures: Mutex::new(HashMap::new()),
             block_duration: Duration::from_secs(3600), // 1 hour
         }
     }
@@ -75,6 +81,33 @@ impl RateLimiter {
         warn!("Blocked IP {} for {:?}", ip, self.block_duration);
     }
 
+    /// Record an authentication failure and block repeated offenders
+    pub fn record_auth_failure(&self, ip: IpAddr) {
+        let now = Instant::now();
+        let should_block = {
+            let mut failures = self.auth_failures.lock().unwrap();
+            let entry = failures.entry(ip).or_insert((0, now));
+
+            if now.duration_since(entry.1) > self.window {
+                entry.0 = 0;
+                entry.1 = now;
+            }
+
+            entry.0 += 1;
+            entry.0 >= AUTH_FAILURE_THRESHOLD
+        };
+
+        if should_block {
+            self.block(ip);
+        }
+    }
+
+    /// Clear authentication failures after a valid request
+    pub fn clear_auth_failures(&self, ip: IpAddr) {
+        let mut failures = self.auth_failures.lock().unwrap();
+        failures.remove(&ip);
+    }
+
     /// Clean up old entries
     pub fn cleanup(&self) {
         let now = Instant::now();
@@ -89,6 +122,12 @@ impl RateLimiter {
         {
             let mut blocked = self.blocked.lock().unwrap();
             blocked.retain(|_, until| now < *until);
+        }
+
+        // Clean up auth failures
+        {
+            let mut failures = self.auth_failures.lock().unwrap();
+            failures.retain(|_, (_, time)| now.duration_since(*time) < self.window * 2);
         }
     }
 }
@@ -147,7 +186,7 @@ impl RequestValidator {
     pub fn new(psk: [u8; 32]) -> Self {
         Self {
             psk,
-            timestamp_tolerance: 600,
+            timestamp_tolerance: TIMESTAMP_TOLERANCE_SECS,
             seen_ids: Mutex::new(HashMap::new()),
         }
     }
@@ -170,13 +209,19 @@ impl RequestValidator {
             return Err(Status::Timeout);
         }
 
-        // Check for replay
+        // Verify authentication token
+        if !verify_auth_token(request, &self.psk) {
+            warn!("Authentication failed for request {}", request.request_id);
+            return Err(Status::AuthFailed);
+        }
+
+        // Only authenticated requests participate in replay tracking.
         {
             let mut seen = self.seen_ids.lock().unwrap();
             let now = Instant::now();
+            let replay_window = Duration::from_secs(self.timestamp_tolerance);
 
-            // Clean up old entries
-            seen.retain(|_, time| now.duration_since(*time) < Duration::from_secs(120));
+            seen.retain(|_, time| now.duration_since(*time) < replay_window);
 
             if seen.contains_key(&request.request_id) {
                 warn!("Duplicate request ID: {}", request.request_id);
@@ -186,12 +231,6 @@ impl RequestValidator {
             seen.insert(request.request_id, now);
         }
 
-        // Verify authentication token
-        if !verify_auth_token(request, &self.psk) {
-            warn!("Authentication failed for request {}", request.request_id);
-            return Err(Status::AuthFailed);
-        }
-
         Ok(())
     }
 }
@@ -199,6 +238,7 @@ impl RequestValidator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use common::Command;
 
     #[test]
     fn test_rate_limiter() {
@@ -220,5 +260,28 @@ mod tests {
         // Empty whitelist allows all
         let allow_all = IpWhitelist::new(&[]);
         assert!(allow_all.is_allowed(&"10.0.0.1".parse().unwrap()));
+    }
+
+    #[test]
+    fn test_rate_limiter_blocks_repeated_auth_failures() {
+        let limiter = RateLimiter::new(10);
+        let ip: IpAddr = "192.168.1.10".parse().unwrap();
+
+        limiter.record_auth_failure(ip);
+        limiter.record_auth_failure(ip);
+        assert!(limiter.check(ip));
+
+        limiter.record_auth_failure(ip);
+        assert!(!limiter.check(ip));
+    }
+
+    #[test]
+    fn test_request_validator_rejects_authenticated_replay() {
+        let psk = common::generate_psk();
+        let validator = RequestValidator::new(psk);
+        let request = CommandRequest::new(Command::Ping, &psk);
+
+        assert!(validator.validate(&request).is_ok());
+        assert_eq!(validator.validate(&request), Err(Status::InvalidCommand));
     }
 }

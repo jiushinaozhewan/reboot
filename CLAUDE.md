@@ -56,7 +56,7 @@ cargo fmt
 
 - iced 0.13 GUI 框架
 - 配置明文存储于 `%APPDATA%\reboot-client\config.toml`
-- 首次连接自动保存 MAC 地址用于 WoL
+- 首次连接自动缓存 MAC 地址，可为每个目标单独配置 WoL 广播地址
 
 ### 安全机制
 
@@ -64,6 +64,7 @@ cargo fmt
 - 请求 ID 去重
 - 速率限制 (默认 10 req/min/IP)
 - 可选 IP 白名单
+- 当前未启用 TLS 链路加密，默认假设部署在可信网络或 VPN 内
 
 ## 关键依赖
 

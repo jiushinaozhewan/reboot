@@ -89,19 +89,6 @@ impl Connection {
         Ok(response)
     }
 
-    /// Ping the agent
-    pub async fn ping(&mut self) -> Result<(), io::Error> {
-        let response = self.send_command(Command::Ping).await?;
-        if response.status == Status::Success {
-            Ok(())
-        } else {
-            Err(io::Error::new(
-                io::ErrorKind::Other,
-                response.message.unwrap_or_else(|| "Ping failed".into()),
-            ))
-        }
-    }
-
     /// Get the agent's MAC address
     pub async fn get_mac_address(&mut self) -> Result<[u8; 6], io::Error> {
         let response = self.send_command(Command::GetMacAddress).await?;
@@ -112,8 +99,7 @@ impl Connection {
                 io::ErrorKind::InvalidData,
                 "No MAC address in response",
             )),
-            _ => Err(io::Error::new(
-                io::ErrorKind::Other,
+            _ => Err(io::Error::other(
                 response
                     .message
                     .unwrap_or_else(|| "Failed to get MAC".into()),
@@ -130,8 +116,7 @@ impl Connection {
         if response.status == Status::Success {
             Ok(())
         } else {
-            Err(io::Error::new(
-                io::ErrorKind::Other,
+            Err(io::Error::other(
                 response
                     .message
                     .unwrap_or_else(|| "Shutdown failed".into()),
@@ -148,26 +133,10 @@ impl Connection {
         if response.status == Status::Success {
             Ok(())
         } else {
-            Err(io::Error::new(
-                io::ErrorKind::Other,
+            Err(io::Error::other(
                 response.message.unwrap_or_else(|| "Restart failed".into()),
             ))
         }
     }
 
-    /// Cancel pending shutdown
-    pub async fn cancel_shutdown(&mut self) -> Result<(), io::Error> {
-        let response = self.send_command(Command::CancelShutdown).await?;
-
-        if response.status == Status::Success {
-            Ok(())
-        } else {
-            Err(io::Error::new(
-                io::ErrorKind::Other,
-                response
-                    .message
-                    .unwrap_or_else(|| "Cancel failed".into()),
-            ))
-        }
-    }
 }

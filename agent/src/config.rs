@@ -60,8 +60,7 @@ impl Config {
         let encrypted = std::fs::read(&path).map_err(|e| ConfigError::ReadError(e.to_string()))?;
 
         let key = derive_hardware_key();
-        let decrypted =
-            decrypt(&encrypted, &key).map_err(|e| ConfigError::CryptoError(e))?;
+        let decrypted = decrypt(&encrypted, &key).map_err(ConfigError::CryptoError)?;
 
         let json =
             String::from_utf8(decrypted).map_err(|e| ConfigError::ParseError(e.to_string()))?;
@@ -87,8 +86,7 @@ impl Config {
             serde_json::to_string_pretty(self).map_err(|e| ConfigError::WriteError(e.to_string()))?;
 
         let key = derive_hardware_key();
-        let encrypted =
-            encrypt(json.as_bytes(), &key).map_err(|e| ConfigError::CryptoError(e))?;
+        let encrypted = encrypt(json.as_bytes(), &key).map_err(ConfigError::CryptoError)?;
 
         std::fs::write(&path, encrypted).map_err(|e| ConfigError::WriteError(e.to_string()))?;
 
@@ -111,12 +109,6 @@ impl Config {
                 Err(e)
             }
         }
-    }
-
-    /// Update the port and save
-    pub fn set_port(&mut self, port: u16) -> Result<(), ConfigError> {
-        self.port = port;
-        self.save()
     }
 }
 

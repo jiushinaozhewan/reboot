@@ -1,7 +1,10 @@
 //! System tray management for the agent
 
+#[cfg(not(windows))]
 use native_dialog::{MessageDialog, MessageType};
 use std::sync::mpsc;
+#[cfg(windows)]
+use std::sync::{Mutex, OnceLock};
 use tray_icon::{
     menu::{CheckMenuItem, Menu, MenuEvent, MenuItem},
     TrayIcon, TrayIconBuilder,
@@ -47,19 +50,6 @@ pub enum TrayAction {
     SetKey,
     ToggleAutoStart,
     Exit,
-}
-
-/// Result of a settings dialog
-#[derive(Debug, Clone)]
-pub enum SettingsResult {
-    /// New port was set, restart required
-    PortChanged(u16),
-    /// New PSK was set, restart required
-    KeyChanged(String),
-    /// Auto-start setting changed
-    AutoStartChanged(bool),
-    /// No change
-    Cancelled,
 }
 
 /// Tray application state
@@ -194,8 +184,8 @@ fn create_default_icon() -> tray_icon::Icon {
             // Create a simple power icon shape
             let center_x = size / 2;
             let center_y = size / 2;
-            let dx = (x as i32 - center_x as i32).abs() as u32;
-            let dy = (y as i32 - center_y as i32).abs() as u32;
+            let dx = (x as i32 - center_x as i32).unsigned_abs();
+            let dy = (y as i32 - center_y as i32).unsigned_abs();
             let dist = ((dx * dx + dy * dy) as f32).sqrt();
 
             // Circle
@@ -326,13 +316,23 @@ fn show_error_message(title: &str, message: &str) {
 }
 
 #[cfg(windows)]
-static mut DIALOG_RESULT: Option<String> = None;
+#[derive(Default)]
+struct DialogState {
+    result: Option<String>,
+    edit_hwnd: isize,
+    label: Option<String>,
+}
+
 #[cfg(windows)]
-static mut EDIT_HWND: HWND = HWND(std::ptr::null_mut());
+fn dialog_state() -> &'static Mutex<DialogState> {
+    static STATE: OnceLock<Mutex<DialogState>> = OnceLock::new();
+    STATE.get_or_init(|| Mutex::new(DialogState::default()))
+}
+
 #[cfg(windows)]
-static mut LABEL_HWND: HWND = HWND(std::ptr::null_mut());
-#[cfg(windows)]
-static mut DIALOG_LABEL: Option<String> = None;
+fn hwnd_from_raw(raw: isize) -> HWND {
+    HWND(raw as *mut _)
+}
 
 #[cfg(windows)]
 const ID_EDIT: i32 = 101;
@@ -359,9 +359,14 @@ unsafe extern "system" fn dialog_proc(
 
             // Create label with stored text
             let label_class = to_wide("STATIC");
-            let label_text = DIALOG_LABEL.as_deref().unwrap_or("请输入值:");
-            let label_text_wide = to_wide(label_text);
-            if let Ok(label) = CreateWindowExW(
+            let label_text = dialog_state()
+                .lock()
+                .unwrap()
+                .label
+                .clone()
+                .unwrap_or_else(|| "请输入值:".to_string());
+            let label_text_wide = to_wide(&label_text);
+            let _ = CreateWindowExW(
                 WINDOW_EX_STYLE(0),
                 PCWSTR(label_class.as_ptr()),
                 PCWSTR(label_text_wide.as_ptr()),
@@ -374,9 +379,7 @@ unsafe extern "system" fn dialog_proc(
                 HMENU(ID_LABEL as *mut _),
                 hinstance,
                 None,
-            ) {
-                LABEL_HWND = label;
-            }
+            );
 
             // Create edit control
             let edit_class = to_wide("EDIT");
@@ -394,7 +397,7 @@ unsafe extern "system" fn dialog_proc(
                 hinstance,
                 None,
             ) {
-                EDIT_HWND = edit;
+                dialog_state().lock().unwrap().edit_hwnd = edit.0 as isize;
             }
 
             // Create OK button
@@ -433,8 +436,9 @@ unsafe extern "system" fn dialog_proc(
             );
 
             // Set focus to edit control
-            if !EDIT_HWND.0.is_null() {
-                let _ = SetFocus(EDIT_HWND);
+            let edit_hwnd = hwnd_from_raw(dialog_state().lock().unwrap().edit_hwnd);
+            if !edit_hwnd.0.is_null() {
+                let _ = SetFocus(edit_hwnd);
             }
 
             LRESULT(0)
@@ -443,25 +447,26 @@ unsafe extern "system" fn dialog_proc(
             let id = (wparam.0 & 0xFFFF) as i32;
             if id == ID_OK {
                 // Get text from edit control
-                let len = GetWindowTextLengthW(EDIT_HWND) as usize;
+                let edit_hwnd = hwnd_from_raw(dialog_state().lock().unwrap().edit_hwnd);
+                let len = GetWindowTextLengthW(edit_hwnd) as usize;
                 if len > 0 {
                     let mut buffer: Vec<u16> = vec![0; len + 1];
-                    GetWindowTextW(EDIT_HWND, &mut buffer);
+                    GetWindowTextW(edit_hwnd, &mut buffer);
                     let text = String::from_utf16_lossy(&buffer[..len]);
-                    DIALOG_RESULT = Some(text);
+                    dialog_state().lock().unwrap().result = Some(text);
                 } else {
-                    DIALOG_RESULT = Some(String::new());
+                    dialog_state().lock().unwrap().result = Some(String::new());
                 }
-                PostQuitMessage(0);
+                let _ = DestroyWindow(hwnd);
             } else if id == ID_CANCEL {
-                DIALOG_RESULT = None;
-                PostQuitMessage(0);
+                dialog_state().lock().unwrap().result = None;
+                let _ = DestroyWindow(hwnd);
             }
             LRESULT(0)
         }
         WM_CLOSE => {
-            DIALOG_RESULT = None;
-            PostQuitMessage(0);
+            dialog_state().lock().unwrap().result = None;
+            let _ = DestroyWindow(hwnd);
             LRESULT(0)
         }
         WM_DESTROY => {
@@ -478,10 +483,12 @@ pub fn show_input_dialog(title: &str, label: &str, default_value: &str) -> Optio
     use std::ptr;
 
     unsafe {
-        DIALOG_RESULT = None;
-        EDIT_HWND = HWND(ptr::null_mut());
-        LABEL_HWND = HWND(ptr::null_mut());
-        DIALOG_LABEL = Some(label.to_string());
+        {
+            let mut state = dialog_state().lock().unwrap();
+            state.result = None;
+            state.edit_hwnd = 0;
+            state.label = Some(label.to_string());
+        }
 
         let hinstance: HINSTANCE = GetModuleHandleW(PCWSTR::null())
             .ok()
@@ -521,21 +528,22 @@ pub fn show_input_dialog(title: &str, label: &str, default_value: &str) -> Optio
             Ok(h) => h,
             Err(_) => {
                 error!("Failed to create dialog window");
-                DIALOG_LABEL = None;
+                dialog_state().lock().unwrap().label = None;
                 return None;
             }
         };
 
         if hwnd.0.is_null() {
             error!("Failed to create dialog window");
-            DIALOG_LABEL = None;
+            dialog_state().lock().unwrap().label = None;
             return None;
         }
 
         // Set default value to edit control
-        if !EDIT_HWND.0.is_null() {
+        let edit_hwnd = hwnd_from_raw(dialog_state().lock().unwrap().edit_hwnd);
+        if !edit_hwnd.0.is_null() {
             let default_wide = to_wide(default_value);
-            let _ = SetWindowTextW(EDIT_HWND, PCWSTR(default_wide.as_ptr()));
+            let _ = SetWindowTextW(edit_hwnd, PCWSTR(default_wide.as_ptr()));
         }
 
         // Show window
@@ -549,12 +557,13 @@ pub fn show_input_dialog(title: &str, label: &str, default_value: &str) -> Optio
             DispatchMessageW(&msg);
         }
 
-        // Cleanup
-        let _ = DestroyWindow(hwnd);
+        // Cleanup. Do not destroy the window here, it is already destroyed
+        // from the message handler to avoid leaving an extra WM_QUIT behind.
         let _ = UnregisterClassW(PCWSTR(class_name.as_ptr()), hinstance);
-        DIALOG_LABEL = None;
-
-        DIALOG_RESULT.take()
+        let mut state = dialog_state().lock().unwrap();
+        state.label = None;
+        state.edit_hwnd = 0;
+        state.result.take()
     }
 }
 

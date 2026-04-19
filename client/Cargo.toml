@@ -6,8 +6,6 @@ edition.workspace = true
 [dependencies]
 common = { workspace = true }
 tokio = { workspace = true }
-tokio-rustls = { workspace = true }
-rustls = { workspace = true }
 serde = { workspace = true }
 rmp-serde = { workspace = true }
 aes-gcm = { workspace = true }
