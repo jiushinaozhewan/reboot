@@ -155,7 +155,11 @@ async fn handle_client(
 
         send_response(
             &mut stream,
-            CommandResponse::error(request.request_id, status, "Validation failed"),
+            CommandResponse::error(
+                request.request_id,
+                status,
+                validation_error_message(status),
+            ),
         )
         .await?;
         return Ok(());
@@ -188,6 +192,16 @@ async fn handle_client(
 
     info!("Completed request {} from {}", request.request_id, addr);
     Ok(())
+}
+
+fn validation_error_message(status: Status) -> &'static str {
+    match status {
+        Status::AuthFailed => "认证失败，请检查目标密钥是否一致",
+        Status::Timeout => "请求时间超出允许范围，请校准控制端和被控端系统时间",
+        Status::InvalidCommand => "请求无效或重复，请重试",
+        Status::RateLimited => "请求过于频繁，请稍后重试",
+        _ => "请求校验失败",
+    }
 }
 
 /// Send a response to the client

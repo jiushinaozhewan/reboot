@@ -18,6 +18,9 @@ pub struct Config {
     /// Maximum requests per IP per minute
     #[serde(default = "default_rate_limit")]
     pub rate_limit: u32,
+    /// Whether debug logging is enabled
+    #[serde(default)]
+    pub log_enabled: bool,
 }
 
 fn default_rate_limit() -> u32 {
@@ -32,6 +35,7 @@ impl Default for Config {
             psk_hex: psk_to_hex(&psk),
             allowed_ips: vec![],
             rate_limit: default_rate_limit(),
+            log_enabled: false,
         }
     }
 }

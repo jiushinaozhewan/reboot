@@ -9,10 +9,6 @@ use tracing::info;
 /// Client configuration for multi-target management
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
-    /// Pre-shared key (hex encoded) - shared by all targets
-    #[serde(default)]
-    pub psk_hex: String,
-
     /// Number of targets to display
     #[serde(default = "default_target_count")]
     pub target_count: usize,
@@ -20,6 +16,14 @@ pub struct Config {
     /// List of target configurations
     #[serde(default)]
     pub targets: Vec<TargetConfig>,
+
+    /// Legacy global PSK used for migration from older clients
+    #[serde(default, alias = "psk_hex", skip_serializing)]
+    pub legacy_global_psk_hex: String,
+
+    /// Whether debug file logging is enabled
+    #[serde(default)]
+    pub log_enabled: bool,
 }
 
 fn default_target_count() -> usize {
@@ -29,21 +33,31 @@ fn default_target_count() -> usize {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            psk_hex: String::new(),
             target_count: default_target_count(),
             targets: Vec::new(),
+            legacy_global_psk_hex: String::new(),
+            log_enabled: false,
         }
     }
 }
 
 impl Config {
     /// Generate runtime targets from configuration
-    pub fn to_targets(&self) -> Vec<Target> {
+    pub fn to_targets(&self) -> (Vec<Target>, Option<String>) {
         let mut targets = Vec::new();
+        let mut warning = None;
         
         // Convert saved target configs to runtime targets
         for (id, config) in self.targets.iter().enumerate() {
-            targets.push(config.to_target(id));
+            let (target, target_warning) = config.to_target(
+                id,
+                (!self.legacy_global_psk_hex.trim().is_empty())
+                    .then_some(self.legacy_global_psk_hex.trim()),
+            );
+            if warning.is_none() {
+                warning = target_warning;
+            }
+            targets.push(target);
         }
         
         // Fill remaining slots with empty targets up to target_count
@@ -51,13 +65,20 @@ impl Config {
             targets.push(Target::new(id));
         }
         
-        targets
+        (targets, warning)
     }
 
     /// Save targets to configuration
-    pub fn update_targets(&mut self, targets: &[Target]) {
-        self.targets = targets.iter().map(TargetConfig::from).collect();
+    pub fn update_targets(&mut self, targets: &[Target]) -> Result<(), ConfigError> {
+        let configs = targets
+            .iter()
+            .map(TargetConfig::try_from_target)
+            .collect::<Result<Vec<_>, _>>()?;
+
+        self.targets = configs;
         self.target_count = targets.len();
+        self.legacy_global_psk_hex.clear();
+        Ok(())
     }
 
     /// Get the config file path

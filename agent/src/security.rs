@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use tracing::{info, warn};
 
 const AUTH_FAILURE_THRESHOLD: u32 = 3;
-const TIMESTAMP_TOLERANCE_SECS: u64 = 60;
+const TIMESTAMP_TOLERANCE_SECS: u64 = 600;
 
 /// Rate limiter for incoming requests
 pub struct RateLimiter {
@@ -238,7 +238,7 @@ impl RequestValidator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use common::Command;
+    use common::{compute_auth_token, Command};
 
     #[test]
     fn test_rate_limiter() {
@@ -283,5 +283,16 @@ mod tests {
 
         assert!(validator.validate(&request).is_ok());
         assert_eq!(validator.validate(&request), Err(Status::InvalidCommand));
+    }
+
+    #[test]
+    fn test_request_validator_allows_clock_skew_within_ten_minutes() {
+        let psk = common::generate_psk();
+        let validator = RequestValidator::new(psk);
+        let mut request = CommandRequest::new(Command::Ping, &psk);
+        request.timestamp = request.timestamp.saturating_sub(300);
+        request.auth_token = compute_auth_token(&request, &psk);
+
+        assert!(validator.validate(&request).is_ok());
     }
 }

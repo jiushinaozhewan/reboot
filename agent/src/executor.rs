@@ -1,8 +1,30 @@
 //! Command executor for Windows system operations
 
 use common::{Command, ExecutionError};
-use std::process::Command as ProcessCommand;
 use tracing::{error, info};
+
+#[cfg(windows)]
+use std::io;
+#[cfg(windows)]
+use windows::core::PCWSTR;
+#[cfg(windows)]
+use windows::Win32::Foundation::{
+    CloseHandle, GetLastError, SetLastError, ERROR_ACCESS_DENIED, ERROR_NOT_ALL_ASSIGNED,
+    ERROR_NO_SHUTDOWN_IN_PROGRESS, ERROR_SUCCESS, HANDLE, WIN32_ERROR,
+};
+#[cfg(windows)]
+use windows::Win32::Security::{
+    AdjustTokenPrivileges, LookupPrivilegeValueW, LUID_AND_ATTRIBUTES, SE_PRIVILEGE_ENABLED,
+    SE_SHUTDOWN_NAME, TOKEN_ADJUST_PRIVILEGES, TOKEN_PRIVILEGES, TOKEN_QUERY,
+};
+#[cfg(windows)]
+use windows::Win32::System::Shutdown::{
+    AbortSystemShutdownW, InitiateShutdownW, SHUTDOWN_FORCE_OTHERS, SHUTDOWN_FORCE_SELF,
+    SHUTDOWN_POWEROFF, SHUTDOWN_RESTART, SHTDN_REASON_FLAG_PLANNED,
+    SHTDN_REASON_MAJOR_APPLICATION, SHTDN_REASON_MINOR_MAINTENANCE,
+};
+#[cfg(windows)]
+use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
 /// Execute a power command on Windows
 pub async fn execute_command(cmd: &Command) -> Result<(), ExecutionError> {
@@ -30,62 +52,201 @@ pub async fn execute_command(cmd: &Command) -> Result<(), ExecutionError> {
     }
 }
 
-/// Execute shutdown or restart using shutdown.exe
+/// Execute shutdown or restart using the native Windows shutdown API
 fn execute_shutdown(restart: bool, force: bool, delay_sec: u16) -> Result<(), ExecutionError> {
-    let mut cmd = ProcessCommand::new("shutdown");
+    #[cfg(windows)]
+    {
+        enable_shutdown_privilege()?;
 
-    // /s = shutdown, /r = restart
-    if restart {
-        cmd.arg("/r");
-    } else {
-        cmd.arg("/s");
+        let reason =
+            SHTDN_REASON_MAJOR_APPLICATION | SHTDN_REASON_MINOR_MAINTENANCE | SHTDN_REASON_FLAG_PLANNED;
+        let mut flags = if restart {
+            SHUTDOWN_RESTART
+        } else {
+            SHUTDOWN_POWEROFF
+        };
+
+        if force {
+            flags |= SHUTDOWN_FORCE_SELF | SHUTDOWN_FORCE_OTHERS;
+        }
+
+        let message = if restart {
+            to_wide("Remote restart via reboot-agent")
+        } else {
+            to_wide("Remote shutdown via reboot-agent")
+        };
+
+        let result = unsafe {
+            InitiateShutdownW(
+                PCWSTR::null(),
+                PCWSTR(message.as_ptr()),
+                u32::from(delay_sec),
+                flags,
+                reason,
+            )
+        };
+
+        if result == ERROR_SUCCESS.0 {
+            info!(
+                "Shutdown API scheduled successfully (restart={}, force={}, delay={}s)",
+                restart, force, delay_sec
+            );
+            Ok(())
+        } else {
+            let error = WIN32_ERROR(result);
+            error!(
+                "Shutdown API failed (restart={}, force={}, delay={}s, code={}): {}",
+                restart,
+                force,
+                delay_sec,
+                error.0,
+                describe_win32_error(error)
+            );
+            Err(map_win32_error(
+                if restart {
+                    "failed to schedule system restart"
+                } else {
+                    "failed to schedule system shutdown"
+                },
+                error,
+            ))
+        }
     }
 
-    // /t = timeout in seconds
-    cmd.args(["/t", &delay_sec.to_string()]);
-
-    // /f = force close applications
-    if force {
-        cmd.arg("/f");
-    }
-
-    // /c = comment (optional, for logging)
-    cmd.args(["/c", "Remote shutdown via reboot-agent"]);
-
-    let output = cmd.output().map_err(|e| {
-        error!("Failed to execute shutdown command: {}", e);
-        ExecutionError::CommandFailed(e.to_string())
-    })?;
-
-    if output.status.success() {
-        info!("Shutdown command executed successfully");
-        Ok(())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        error!("Shutdown command failed: {}", stderr);
-        Err(ExecutionError::CommandFailed(stderr.to_string()))
+    #[cfg(not(windows))]
+    {
+        let _ = (restart, force, delay_sec);
+        Err(ExecutionError::NotSupported)
     }
 }
 
 /// Cancel a pending shutdown
 fn cancel_shutdown() -> Result<(), ExecutionError> {
-    let output = ProcessCommand::new("shutdown")
-        .arg("/a") // abort
-        .output()
-        .map_err(|e| ExecutionError::CommandFailed(e.to_string()))?;
+    #[cfg(windows)]
+    {
+        enable_shutdown_privilege()?;
 
-    if output.status.success() {
-        info!("Shutdown cancelled successfully");
-        Ok(())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        // Not having a pending shutdown is not really an error
-        if stderr.contains("1116") {
-            info!("No shutdown to cancel");
-            Ok(())
-        } else {
-            Err(ExecutionError::CommandFailed(stderr.to_string()))
+        match unsafe { AbortSystemShutdownW(PCWSTR::null()) } {
+            Ok(()) => {
+                info!("Shutdown cancelled successfully");
+                Ok(())
+            }
+            Err(_) => {
+                let error = unsafe { GetLastError() };
+                if error == ERROR_NO_SHUTDOWN_IN_PROGRESS {
+                    info!("No shutdown to cancel");
+                    Ok(())
+                } else {
+                    error!(
+                        "Failed to cancel shutdown (code={}): {}",
+                        error.0,
+                        describe_win32_error(error)
+                    );
+                    Err(map_win32_error("failed to cancel shutdown", error))
+                }
+            }
         }
+    }
+
+    #[cfg(not(windows))]
+    {
+        Err(ExecutionError::NotSupported)
+    }
+}
+
+#[cfg(windows)]
+fn enable_shutdown_privilege() -> Result<(), ExecutionError> {
+    let mut token = HANDLE::default();
+
+    unsafe {
+        OpenProcessToken(
+            GetCurrentProcess(),
+            TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY,
+            &mut token,
+        )
+        .map_err(|_| {
+            let error = GetLastError();
+            error!(
+                "Failed to open process token for shutdown privilege (code={}): {}",
+                error.0,
+                describe_win32_error(error)
+            );
+            map_win32_error("failed to open process token", error)
+        })?;
+
+        let result = (|| {
+            let mut luid = Default::default();
+            LookupPrivilegeValueW(PCWSTR::null(), SE_SHUTDOWN_NAME, &mut luid).map_err(|_| {
+                let error = GetLastError();
+                error!(
+                    "Failed to lookup shutdown privilege (code={}): {}",
+                    error.0,
+                    describe_win32_error(error)
+                );
+                map_win32_error("failed to lookup shutdown privilege", error)
+            })?;
+
+            let privileges = TOKEN_PRIVILEGES {
+                PrivilegeCount: 1,
+                Privileges: [LUID_AND_ATTRIBUTES {
+                    Luid: luid,
+                    Attributes: SE_PRIVILEGE_ENABLED,
+                }],
+            };
+
+            SetLastError(ERROR_SUCCESS);
+            AdjustTokenPrivileges(token, false, Some(&privileges), 0, None, None).map_err(|_| {
+                let error = GetLastError();
+                error!(
+                    "Failed to adjust shutdown privilege (code={}): {}",
+                    error.0,
+                    describe_win32_error(error)
+                );
+                map_win32_error("failed to enable shutdown privilege", error)
+            })?;
+
+            let error = GetLastError();
+            if error == ERROR_NOT_ALL_ASSIGNED {
+                error!(
+                    "Shutdown privilege was not assigned to the current token (code={}): {}",
+                    error.0,
+                    describe_win32_error(error)
+                );
+                return Err(map_win32_error(
+                    "shutdown privilege is not assigned to the current process",
+                    error,
+                ));
+            }
+
+            Ok(())
+        })();
+
+        let _ = CloseHandle(token);
+        result
+    }
+}
+
+#[cfg(windows)]
+fn to_wide(value: &str) -> Vec<u16> {
+    value.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+#[cfg(windows)]
+fn describe_win32_error(error: WIN32_ERROR) -> String {
+    io::Error::from_raw_os_error(error.0 as i32).to_string()
+}
+
+#[cfg(windows)]
+fn map_win32_error(action: &str, error: WIN32_ERROR) -> ExecutionError {
+    let detail = describe_win32_error(error);
+
+    if error == ERROR_ACCESS_DENIED || error == ERROR_NOT_ALL_ASSIGNED {
+        ExecutionError::CommandFailed(format!(
+            "{}: {}. Run reboot-agent as administrator.",
+            action, detail
+        ))
+    } else {
+        ExecutionError::CommandFailed(format!("{}: {} (Win32 error {})", action, detail, error.0))
     }
 }
 

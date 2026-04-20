@@ -1,233 +1,251 @@
-# Reboot - 远程电源管理系统PC版
+# Reboot
+
+> 面向 Windows 局域网环境的远程电源管理工具，提供被控端 `reboot-agent.exe` 与控制端 `reboot-client.exe`。
 
 [![Release](https://img.shields.io/github/v/release/jiushinaozhewan/reboot)](https://github.com/jiushinaozhewan/reboot/releases)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-一个安全、轻量的远程电源管理工具，支持远程关机、重启和 Wake-on-LAN 功能。
+## 项目概览
+
+Reboot 用于在局域网内对 Windows 设备执行：
+
+- 远程关机
+- 远程重启
+- Wake-on-LAN 开机
+- 多目标批量管理
+- 每目标独立密钥认证
+
+当前版本重点加强了稳定性、取证能力和多目标易用性：
+
+- `reboot-agent.exe`
+  - 修复托盘菜单在输入配置后假死的问题
+  - 输入对话框改为独立 helper 进程，去掉黑框并降低瞬时资源占用
+  - 新增可开关的调试日志，默认关闭，调试时再写 `log.txt`
+- `reboot-client.exe`
+  - 支持每目标独立密钥并本地加密保存
+  - 修复目标密钥输入框串行联动与异常显示问题
+  - 新增网段端口自动扫描，扫描到的 IP 自动填入目标列表
+  - 新增可开关的调试日志，默认关闭
 
 ## 功能特性
 
-- **远程关机** - 安全地远程关闭目标计算机
-- **远程重启** - 远程重启目标计算机
-- **Wake-on-LAN** - 通过网络唤醒处于关机状态的计算机
-- **PSK 认证** - 使用预共享密钥 (HMAC-SHA256) 验证命令来源
-- **防重放攻击** - 时间戳验证 (±60秒) + 请求 ID 去重
-- **速率限制** - 防止暴力破解 (默认 10 请求/分钟/IP)
-- **IP 白名单** - 可选的 IP 访问控制
+### 安全
+
+- HMAC-SHA256 预共享密钥认证
+- 请求时间戳校验与重放保护
+- 可选 IP 白名单
+- 请求限流与认证失败封禁
+- 控制端密钥本地保护存储
+
+### 被控端 Agent
+
+- 托盘常驻运行
+- 可修改监听端口
+- 可显示/修改认证密钥
+- 可配置开机自启
+- 可切换调试日志输出
+- 管理员权限下调用 Windows 原生关机/重启 API
+
+### 控制端 Client
+
+- 1-200 个目标的批量管理
+- 每目标独立别名 / IP / 端口 / 广播地址 / MAC / 密钥
+- 自动端口扫描并填充目标列表
+- 批量测试连接 / 关机 / 重启 / Wake-on-LAN
+- MAC 自动获取，失败时支持 ARP 回退
+- 可切换调试日志输出
 
 ## 系统要求
 
-### 运行环境
+| 项目 | 要求 |
+| --- | --- |
+| 操作系统 | Windows 10 / Windows 11 优先，Windows 7 SP1 及以上可尝试 |
+| 架构 | x86_64 |
+| Agent 权限 | 需要管理员权限运行 |
+| 网络 | 控制端与被控端网络可达，Agent 默认监听 TCP `7890` |
 
-| 组件 | 要求 |
-|------|------|
-| 操作系统 | Windows 7 SP1 及以上 |
-| 架构 | x86_64 (64位) |
-| 权限 | 被控端需要管理员权限 |
-| 网络 | 被控端需开放 TCP 端口 (默认 7890) |
+## 下载与构建
 
-### 编译环境 (仅开发者)
+### 直接下载
 
-| 工具 | 版本要求 |
-|------|----------|
-| Rust | 1.70.0 及以上 |
-| Cargo | 随 Rust 安装 |
-| Visual Studio Build Tools | 2019 或更高 (Windows) |
+前往 [GitHub Releases](https://github.com/jiushinaozhewan/reboot/releases) 下载：
+
+- `reboot-agent.exe`
+- `reboot-client.exe`
+
+### 从源码构建
+
+```powershell
+git clone https://github.com/jiushinaozhewan/reboot.git
+cd reboot
+cargo build --release
+```
+
+生成物位于：
+
+- `target/release/reboot-agent.exe`
+- `target/release/reboot-client.exe`
 
 ## 快速开始
 
-### 方式一：下载预编译版本 (推荐)
+### 1. 部署 Agent
 
-1. 前往 [Releases](https://github.com/jiushinaozhewan/reboot/releases) 页面
-2. 下载最新版本的 `reboot-agent.exe` 和 `reboot-client.exe`
+1. 将 `reboot-agent.exe` 复制到被控端。
+2. 以管理员身份首次运行。
+3. 记录或复制首次生成的认证密钥。
+4. 按需配置：
+   - 监听端口
+   - 开机启动
+   - 调试日志
 
-### 方式二：从源码编译
+建议放行防火墙端口：
 
-```bash
-# 克隆仓库
-git clone https://github.com/jiushinaozhewan/reboot.git
-cd reboot
-
-# 编译 Release 版本
-cargo build --release
-
-# 可执行文件位于
-# target/release/reboot-agent.exe
-# target/release/reboot-client.exe
+```powershell
+New-NetFirewallRule -DisplayName "Reboot Agent" -Direction Inbound -Protocol TCP -LocalPort 7890 -Action Allow
 ```
 
-## 部署指南
+### 2. 配置 Client
 
-### 被控端 (Agent) 部署
+1. 运行 `reboot-client.exe`。
+2. 设置目标数量，或通过“自动扫描”发现目标。
+3. 为每个目标填写：
+   - 别名
+   - IP
+   - 端口
+   - 广播地址（可选）
+   - MAC 地址（可手动填，也可连接后自动获取）
+   - 目标密钥
+4. 点击“保存配置”。
 
-1. **复制程序**
-   ```
-   将 reboot-agent.exe 复制到被控计算机
-   ```
+### 3. 执行操作
 
-2. **首次运行配置**
-   - 以管理员身份运行 `reboot-agent.exe`
-   - 首次运行会自动创建配置向导
-   - 设置监听端口和预共享密钥 (PSK)
+常用流程：
 
-3. **配置防火墙**
-   ```powershell
-   # 以管理员身份运行 PowerShell
-   New-NetFirewallRule -DisplayName "Reboot Agent" -Direction Inbound -Protocol TCP -LocalPort 7890 -Action Allow
-   ```
+1. 先点“测试连接”
+2. 确认目标状态为“已连接”
+3. 再执行“关机”或“重启”
+4. 若目标已保存 MAC，可使用“开机 (WoL)”
 
-4. **设置开机自启 (可选)**
-   - 将 `reboot-agent.exe` 的快捷方式放入启动文件夹
-   - 或使用任务计划程序创建开机任务
+## 自动扫描
 
-### 控制端 (Client) 部署
+客户端新增自动扫描区，支持：
 
-1. **复制程序**
-   ```
-   将 reboot-client.exe 复制到控制计算机
-   ```
+- 输入单个 IPv4 地址，例如 `10.0.0.130`
+- 输入 CIDR 网段，例如 `10.0.0.0/24`
+- 指定端口后扫描
 
-2. **直接运行**
-   - 双击运行 `reboot-client.exe`
-   - 无需管理员权限
+行为说明：
 
-## 使用方法
+- 扫描到的可连接 IP 会按顺序填入目标列表
+- 如果结果条目多于当前目标数量，会自动新增目标条目
+- 扫描范围上限为 1024 个地址，避免误扫过大网段
 
-### 控制端操作
+## 日志与取证
 
-1. **启动程序** - 运行 `reboot-client.exe`
+Agent 与 Client 现在都支持可开关的文件日志：
 
-2. **连接被控端**
-   - 输入被控端 IP 地址 (如 `192.168.1.100`)
-   - 输入端口号 (默认 `7890`)
-   - 输入预共享密钥 (与被控端配置一致)
-   - 点击「连接」
+- 默认关闭，不写磁盘，减少日常资源占用
+- 需要调试时手动打开“调试日志”
+- 日志文件写入程序同目录：
+  - `log.txt`
 
-3. **执行操作**
-   - 点击「关机」- 远程关闭被控端
-   - 点击「重启」- 远程重启被控端
-   - 点击「唤醒」- 发送 WoL 魔术包唤醒被控端
+建议取证方式：
 
-### Wake-on-LAN 设置
-
-要使用 WoL 唤醒功能，需要在被控端进行以下配置：
-
-1. **BIOS 设置**
-   - 进入 BIOS 设置界面
-   - 找到「Power Management」或「电源管理」
-   - 启用「Wake on LAN」或「网络唤醒」
-
-2. **网卡设置**
-   ```
-   设备管理器 → 网络适配器 → 右键属性 → 电源管理
-   ☑ 允许此设备唤醒计算机
-   ☑ 只允许魔术数据包唤醒计算机
-   ```
-
-3. **关闭快速启动 (Windows 10/11)**
-   ```
-   控制面板 → 电源选项 → 选择电源按钮的功能 → 更改当前不可用的设置
-   ☐ 取消勾选「启用快速启动」
-   ```
+1. 打开 Client 的“调试日志”
+2. 打开 Agent 的“调试日志”
+3. 复现一次问题
+4. 同时收集两端 `log.txt`
 
 ## 配置文件
 
-### 被控端配置
+### Agent
 
-配置文件位置：`%APPDATA%\reboot-agent\config.enc` (加密存储)
+- 路径：`%APPDATA%\reboot-agent\config.enc`
+- 特点：本地加密存储
 
-配置项：
-- `port` - 监听端口 (默认: 7890)
-- `psk` - 预共享密钥
-- `rate_limit` - 速率限制 (默认: 10 请求/分钟)
-- `ip_whitelist` - IP 白名单 (可选)
+主要配置项：
 
-### 控制端配置
+- `port`
+- `psk_hex`
+- `allowed_ips`
+- `rate_limit`
+- `log_enabled`
 
-配置文件位置：`%APPDATA%\reboot-client\config.toml` (明文存储)
+### Client
 
-配置项：
-- `psk_hex` - 全局认证密钥
-- `target_count` - 目标列表数量
-- `targets` - 多目标配置（别名、IP、端口、可选广播地址、缓存 MAC）
+- 路径：`%APPDATA%\reboot-client\config.toml`
+- 特点：目标列表明文结构化保存，目标密钥单独加密保护
 
-## 项目结构
+主要配置项：
 
-```
-reboot/
-├── common/          # 共享库
-│   └── src/
-│       ├── protocol.rs   # 通信协议定义
-│       ├── crypto.rs     # 加密工具
-│       └── errors.rs     # 错误类型
-├── agent/           # 被控端
-│   └── src/
-│       ├── main.rs       # 入口点
-│       ├── server.rs     # TCP 服务器
-│       ├── executor.rs   # 命令执行器
-│       ├── config.rs     # 配置管理
-│       ├── security.rs   # 安全模块
-│       └── tray.rs       # 系统托盘
-├── client/          # 控制端
-│   └── src/
-│       ├── main.rs       # 入口点
-│       ├── ui.rs         # 图形界面
-│       ├── connection.rs # 连接管理
-│       ├── config.rs     # 配置管理
-│       └── wol.rs        # Wake-on-LAN
-└── Cargo.toml       # 工作空间配置
-```
+- `target_count`
+- `targets`
+- `log_enabled`
 
-## 安全说明
+## Wake-on-LAN 使用说明
 
-1. **预共享密钥 (PSK)** - 请使用强密码，建议 16 位以上随机字符
-2. **网络安全** - 当前版本未启用 TLS 链路加密，建议仅在内网或 VPN 中使用
-3. **防火墙** - 仅开放必要端口，建议配合 IP 白名单使用
-4. **定期更新** - 关注项目更新，及时升级到最新版本
+被控端要成功 WoL，需要同时满足：
+
+1. BIOS/UEFI 已开启 Wake-on-LAN
+2. 网卡电源管理允许魔术包唤醒
+3. Windows 快速启动已关闭
+4. 控制端到目标广播网络可达
 
 ## 常见问题
 
-### Q: 连接超时怎么办？
-A: 检查以下项目：
-- 被控端防火墙是否开放端口
-- IP 地址和端口是否正确
-- 被控端 Agent 是否正在运行
+### 1. 测试连接成功，但关机/重启失败
 
-### Q: WoL 唤醒失败？
-A: 确认以下设置：
-- BIOS 中已启用 Wake-on-LAN
-- 网卡电源管理已配置正确
-- 已关闭 Windows 快速启动
-- 控制端与被控端在同一局域网
+优先检查：
 
-### Q: 关机命令执行失败？
-A: 确保被控端以管理员权限运行 Agent
+- Agent 是否以管理员身份运行
+- 目标密钥是否与对应 Agent 一致
+- Agent 是否因认证失败触发限流/封禁
+- 两端是否同时开启调试日志并已收集 `log.txt`
 
-## 开发相关
+### 2. WoL 唤醒失败
 
-```bash
-# 运行测试
+优先检查：
+
+- BIOS/UEFI 设置
+- 网卡电源管理
+- 快速启动
+- MAC 地址是否正确
+- 广播地址是否需要手动指定
+
+### 3. 自动扫描没有发现目标
+
+优先检查：
+
+- 输入网段是否正确
+- 扫描端口是否与 Agent 实际监听端口一致
+- 防火墙是否放行
+- 目标主机是否在线
+
+## 项目结构
+
+```text
+reboot/
+├─ agent/                  # 被控端
+├─ client/                 # 控制端
+├─ common/                 # 协议/加密/错误定义
+├─ MULTI_TARGET_GUIDE.md   # 多目标使用说明
+├─ CHANGELOG.md            # 更新记录
+└─ README.md
+```
+
+## 开发命令
+
+```powershell
 cargo test
-
-# 代码检查
-cargo clippy --all-targets
-
-# 格式化代码
-cargo fmt
-
-# 构建单个组件
+cargo build --release
 cargo build -p reboot-agent --release
 cargo build -p reboot-client --release
 ```
 
 ## 许可证
 
-本项目采用 MIT 许可证 - 详见 [LICENSE](LICENSE) 文件
+MIT
 
-## 贡献
+## 说明
 
-欢迎提交 Issue 和 Pull Request！
-
----
-
-**注意**：本工具仅供合法用途，请勿用于未经授权的远程控制。使用者需自行承担使用风险。
+本项目仅用于合法、受授权的远程电源管理场景。请勿将其用于未授权控制或任何违法用途。

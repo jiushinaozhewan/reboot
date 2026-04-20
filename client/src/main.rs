@@ -5,14 +5,15 @@
 
 mod config;
 mod connection;
+mod logging;
+mod scan;
+mod secret_store;
 mod target;
 mod ui;
 mod wol;
 
 use iced::font::Family;
 use iced::{Font, Size};
-use tracing::Level;
-use tracing_subscriber::FmtSubscriber;
 
 /// Default font with Chinese support (Microsoft YaHei on Windows)
 const DEFAULT_FONT: Font = Font {
@@ -23,14 +24,8 @@ const DEFAULT_FONT: Font = Font {
 };
 
 fn main() -> iced::Result {
-    // Initialize logging
-    let subscriber = FmtSubscriber::builder()
-        .with_max_level(Level::INFO)
-        .finish();
-
-    tracing::subscriber::set_global_default(subscriber).expect("Failed to set subscriber");
-
-    tracing::info!("Reboot Client starting...");
+    let config = config::Config::load_or_create();
+    logging::init(config.log_enabled);
 
     // Run the GUI with Chinese font support
     iced::application("远程电源管理 - 多目标控制", ui::App::update, ui::App::view)
@@ -38,5 +33,5 @@ fn main() -> iced::Result {
         .resizable(true)
         .theme(ui::App::theme)
         .default_font(DEFAULT_FONT)
-        .run_with(ui::App::new)
+        .run_with(move || ui::App::new_with_config(config.clone()))
 }
